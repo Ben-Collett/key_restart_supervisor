@@ -1,0 +1,12 @@
+[build]
+executable_name = "ksv"
+command = "python $dumb_project_dir/ksv.py"
+exclude = [
+  ".git",
+  "__pycache__",
+  "keyboard/__pycache__",
+  "dumb_build.toml",
+  "test.py",
+  "LICENSE",
+  "README.md",
+]
