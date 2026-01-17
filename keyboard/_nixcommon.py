@@ -6,14 +6,15 @@ from io import BufferedWriter
 import os
 import signal
 import atexit
+from ._nixlibudev import set_up_libudev, create_udev_monitor, monitor_on_add
 from time import time as now
+from time import sleep
 from threading import Thread
 from glob import glob
-# from queue import Queue
 from multiprocessing import Queue, Process
-
 # l = long, H = unsigned short,I = unsigned int
 event_bin_format = 'llHHI'
+
 
 # Taken from include/linux/input.h
 # https://www.kernel.org/doc/Documentation/input/event-codes.txt
@@ -28,6 +29,12 @@ EV_REL = 0x02
 EV_ABS = 0x03
 # miscellanesus event
 EV_MSC = 0x04
+
+
+try:
+    _lib_udev = set_up_libudev()
+except BaseException:
+    _lib_udev = None
 
 
 def make_uinput():
@@ -57,7 +64,7 @@ class EventDevice(object):
             except IOError as e:
                 if e.strerror == 'Permission denied':
                     print(f"# ERROR: Failed to read device '{
-                          self.path}'. You must be in the 'input' group to access global events. Use 'sudo usermod -a -G input USERNAME' to add user to the required group.")
+                          self.path}'. You must be in the 'input' group to access global events. Use 'sudo usermod -a -G input USERNAME' to add user to the required group. Or just run the program with root privlages")
                     exit()
 
         return self._input_file
@@ -97,16 +104,27 @@ def device_reader_worker(device_paths, event_queue):
 
     def read_loop(device):
         while True:
-            event_queue.put(device.read_event(), block=True)
+            try:
+                event_queue.put(device.read_event(), block=True)
+            except OSError:
+                break
 
-    threads = []
     for d in devices:
-        t = Thread(target=read_loop, args=(d,), daemon=True)
-        t.start()
-        threads.append(t)
+        Thread(target=read_loop, args=(d,), daemon=True).start()
 
-    for t in threads:
-        t.join()
+    def add_device(path):
+        Thread(target=read_loop, args=(EventDevice(path),), daemon=True).start()
+
+    if _lib_udev:
+        try:
+            udev, mon, fd = create_udev_monitor(_lib_udev)
+            monitor_on_add(_lib_udev, mon, add_device)
+        except BaseException:
+            pass
+
+    # only should be reached if monitor fails
+    while True:
+        sleep(1e6)
 
 
 class AggregatedEventDevice:

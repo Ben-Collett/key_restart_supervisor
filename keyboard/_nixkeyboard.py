@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import re
-from multiprocessing import Condition
-import multiprocessing
+from threading import Condition
 from collections import defaultdict
 from subprocess import check_output, CalledProcessError
 from ._keyboard_event import KeyboardEvent, KEY_DOWN, KEY_UP
@@ -57,12 +56,41 @@ to_name = defaultdict(list)
 from_name = defaultdict(list)
 keypad_scan_codes = set()
 
+MODIFIER_WEIGHTS = {
+    'shift': 1,
+    'alt gr': 2,
+    'alt': 3,
+    'ctrl': 4,
+}
+
+
+def modifier_cost(modifiers):
+    return sum(MODIFIER_WEIGHTS[m] for m in modifiers)
+
 
 def register_key(key_and_modifiers, name):
+    scan_code, modifiers = key_and_modifiers
+
     if name not in to_name[key_and_modifiers]:
         to_name[key_and_modifiers].append(name)
-    if key_and_modifiers not in from_name[name]:
-        from_name[name].append(key_and_modifiers)
+
+    # --- from_name: prefer fewer modifiers ---
+    existing = from_name[name]
+
+    if not existing:
+        existing.append(key_and_modifiers)
+        return
+
+    # Find current best mapping
+    best = min(existing, key=lambda km: modifier_cost(km[1]))
+
+    # Replace if new mapping is better
+    if modifier_cost(modifiers) < modifier_cost(best[1]):
+        existing.clear()
+        existing.append(key_and_modifiers)
+    elif modifier_cost(modifiers) == modifier_cost(best[1]):
+        if key_and_modifiers not in existing:
+            existing.append(key_and_modifiers)
 
 
 def build_tables():
@@ -142,7 +170,7 @@ def init():
     global _down_keys
     build_device()
     build_tables()
-    _down_keys = multiprocessing.Manager().dict()
+    _down_keys = dict()
 
 
 pressed_modifiers = set()
@@ -217,6 +245,12 @@ def press(scan_code):
 
 def release(scan_code):
     write_event(scan_code, False)
+
+
+"""
+Doesn't work on wayland because waland blocks synthetic unicode events by
+design
+"""
 
 
 def type_unicode(character):

@@ -1093,6 +1093,7 @@ def write(text, delay=0, restore_state_after=True, exact=None):
                 entries = _get_os_keyboard().map_name(normalize_name(letter))
                 scan_code, modifiers = next(iter(entries))
             except (KeyError, ValueError, StopIteration):
+                # Doesn't work on wayland
                 _get_os_keyboard().type_unicode(letter)
                 continue
 
