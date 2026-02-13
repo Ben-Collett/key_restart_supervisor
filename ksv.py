@@ -12,6 +12,8 @@ import datetime
 
 RESTART_HOTKEY = "ctrl+windows+r"
 STOP_HOTKEY = "ctrl+windows+q"
+CLEAR_HOTKEY = "ctrl+windows+k"
+HELP_HOTKEY = "ctrl+windows+h"
 
 child = None
 restart_requested = threading.Event()
@@ -20,6 +22,8 @@ shutdown_requested = threading.Event()
 
 QUIET = False
 QUIET_STARTUP = False
+_current_command = None
+_run_as_root = False
 
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
@@ -65,6 +69,7 @@ def get_child_user(run_as_root: bool) -> str:
     # Fallback: effective user
     try:
         import pwd  # Linux-only
+
         return pwd.getpwuid(os.geteuid()).pw_name
     except Exception:
         return "unknown"
@@ -122,15 +127,48 @@ def on_stop_hotkey():
         stop_requested.set()
 
 
+def on_clear_hotkey():
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        os.system("clear")
+
+
+def print_help_message(command, root, quiet_startup):
+    if quiet_startup:
+        return
+
+    child_color = WHITE_BOLD
+    if root:
+        child_color = RED_BOLD
+
+    user = get_child_user(root)
+    sup_print(f"Child will run as user: {child_color}{user}{RESET}")
+    sup_print(f"Command: {WHITE_BOLD}{' '.join(command)}{RESET}")
+
+    k = RESTART_HOTKEY
+    sup_print(f"Restart hotkey: {WHITE_BOLD}{k}{RESET}")
+    k = STOP_HOTKEY
+    sup_print(f"Stop hotkey: {WHITE_BOLD}{k}{RESET}")
+    k = CLEAR_HOTKEY
+    sup_print(f"Clear hotkey: {WHITE_BOLD}{k}{RESET}")
+    k = HELP_HOTKEY
+    sup_print(f"Help hotkey: {WHITE_BOLD}{k}{RESET}")
+    sup_print(f"Press {WHITE_BOLD}ctrl+c{RESET} to quit supervisor\n")
+
+
+def on_help_hotkey():
+    global _current_command, _run_as_root
+    print_help_message(_current_command, _run_as_root, False)
+
+
 def supervisor_loop(command, run_as_root):
     global child
 
     start_child(command, run_as_root)
 
     while not shutdown_requested.is_set():
-
         while child and child.poll() is None:
-
             if stop_requested.is_set():
                 stop_requested.clear()
                 sup_print_runtime("stopping")
@@ -163,7 +201,8 @@ def main():
     global QUIET, QUIET_STARTUP
 
     parser = argparse.ArgumentParser(
-        description="A simple tool to easily run, restart, terminate, and rerun a process, based on a keybinding to make development easier.")
+        description="A simple tool to easily run, restart, terminate, and rerun a process, based on a keybinding to make development easier."
+    )
     parser.add_argument(
         "-r",
         "--root",
@@ -192,11 +231,18 @@ def main():
     if not args.command:
         if not QUIET:
             print(
-                "[supervisor] Usage: sudo python reloader.py [-r] [-q|-qq] <command...>")
+                "[supervisor] Usage: sudo python reloader.py [-r] [-q|-qq] <command...>"
+            )
         sys.exit(1)
+
+    global _current_command, _run_as_root
+    _current_command = args.command
+    _run_as_root = args.root
 
     keyboard.add_hotkey(RESTART_HOTKEY, on_restart_hotkey)
     keyboard.add_hotkey(STOP_HOTKEY, on_stop_hotkey)
+    keyboard.add_hotkey(CLEAR_HOTKEY, on_clear_hotkey)
+    keyboard.add_hotkey(HELP_HOTKEY, on_help_hotkey)
 
     global YELLOW, CYAN, NORMAL_COLOR, RED_BOLD, WHITE_BOLD, RESET
     if args.no_ansii:
@@ -206,21 +252,8 @@ def main():
         RED_BOLD = ""
         WHITE_BOLD = ""
         RESET = ""
-    if not QUIET_STARTUP:
-        child_color = WHITE_BOLD
-        if args.root:
-            child_color = RED_BOLD
 
-        user = get_child_user(args.root)
-        sup_print(f"Child will run as user: {child_color}{user}{RESET}")
-
-        sup_print(f"Command: {WHITE_BOLD}{' '.join(args.command)}{RESET}")
-
-        k = RESTART_HOTKEY
-        sup_print(f"Restart hotkey: {WHITE_BOLD}{k}{RESET}")
-        k = STOP_HOTKEY
-        sup_print(f"Stop hotkey: {WHITE_BOLD}{k}{RESET}")
-        sup_print(f"Press {WHITE_BOLD}ctrl+c{RESET} to quit supervisor\n")
+    print_help_message(args.command, args.root, QUIET_STARTUP)
 
     try:
         supervisor_loop(args.command, args.root)

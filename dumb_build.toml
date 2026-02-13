@@ -1,12 +1,15 @@
 [build]
 executable_name = "ksv"
 command = "python $dumb_project_dir/ksv.py"
-exclude = [
-  ".git",
+excluded = [
+  ".gitignore",
   "__pycache__",
+  "images",
   "keyboard/__pycache__",
+  ".ruff_cache",
   "dumb_build.toml",
   "test.py",
   "LICENSE",
   "README.md",
 ]
+local_install_excluded = [".git"]
