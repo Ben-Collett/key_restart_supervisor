@@ -19,11 +19,14 @@ child = None
 restart_requested = threading.Event()
 stop_requested = threading.Event()
 shutdown_requested = threading.Event()
+duration_timer = None
 
 QUIET = False
 QUIET_STARTUP = False
 _current_command = None
 _run_as_root = False
+_duration_seconds = None
+_duration_str = None
 
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
@@ -35,6 +38,21 @@ RESET = "\033[22;39m"
 
 def current_timestamp():
     return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-4]
+
+
+def parse_duration(duration_str):
+    """
+    Parse a duration string to seconds (float).
+    '5' -> 5.0 seconds
+    '500ms' -> 0.5 seconds
+    """
+    if duration_str is None:
+        return None
+    duration_str = duration_str.strip().lower()
+    if duration_str.endswith("ms"):
+        return float(duration_str[:-2]) / 1000.0
+    else:
+        return float(duration_str)
 
 
 def is_linux():
@@ -90,7 +108,7 @@ def drop_privileges_preexec():
     os.setuid(int(sudo_uid))
 
 
-def start_child(command, run_as_root):
+def start_child(command, run_as_root, duration=None):
     global child
 
     preexec = None
@@ -106,9 +124,15 @@ def start_child(command, run_as_root):
         preexec_fn=preexec,
     )
 
+    if duration:
+        start_duration_timer(duration)
+
 
 def stop_child():
-    global child
+    global child, duration_timer
+    if duration_timer:
+        duration_timer.cancel()
+        duration_timer = None
     if child and child.poll() is None:
         try:
             child.send_signal(signal.SIGTERM)
@@ -116,6 +140,22 @@ def stop_child():
         except Exception:
             child.kill()
     child = None
+
+
+def start_duration_timer(seconds):
+    global duration_timer
+    if duration_timer:
+        duration_timer.cancel()
+    duration_timer = threading.Timer(seconds, on_duration_timeout)
+    duration_timer.daemon = True
+    duration_timer.start()
+
+
+def on_duration_timeout():
+    global duration_timer
+    duration_timer = None
+    sup_print_runtime(f"duration timeout ({_duration_str}), stopping")
+    stop_requested.set()
 
 
 def on_restart_hotkey():
@@ -162,10 +202,10 @@ def on_help_hotkey():
     print_help_message(_current_command, _run_as_root, False)
 
 
-def supervisor_loop(command, run_as_root):
+def supervisor_loop(command, run_as_root, duration=None):
     global child
 
-    start_child(command, run_as_root)
+    start_child(command, run_as_root, duration)
 
     while not shutdown_requested.is_set():
         while child and child.poll() is None:
@@ -180,7 +220,7 @@ def supervisor_loop(command, run_as_root):
                 stop_requested.clear()
                 sup_print_runtime("restarting")
                 stop_child()
-                start_child(command, run_as_root)
+                start_child(command, run_as_root, duration)
 
             time.sleep(0.05)
 
@@ -192,7 +232,7 @@ def supervisor_loop(command, run_as_root):
             if restart_requested.is_set():
                 restart_requested.clear()
                 sup_print_runtime("starting")
-                start_child(command, run_as_root)
+                start_child(command, run_as_root, duration)
             else:
                 time.sleep(0.1)
 
@@ -221,6 +261,13 @@ def main():
         default=0,
         help="suppress supervisor runtime output (-qq suppresses startup too)",
     )
+    parser.add_argument(
+        "-d",
+        "--duration",
+        type=str,
+        metavar="DURATION",
+        help="automatically terminate the subprocess after this duration (e.g., '5' for 5 seconds, '500ms' for 500 milliseconds)",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
@@ -235,9 +282,11 @@ def main():
             )
         sys.exit(1)
 
-    global _current_command, _run_as_root
+    global _current_command, _run_as_root, _duration_seconds, _duration_str
     _current_command = args.command
     _run_as_root = args.root
+    _duration_str = args.duration
+    _duration_seconds = parse_duration(_duration_str)
 
     keyboard.add_hotkey(RESTART_HOTKEY, on_restart_hotkey)
     keyboard.add_hotkey(STOP_HOTKEY, on_stop_hotkey)
@@ -256,7 +305,7 @@ def main():
     print_help_message(args.command, args.root, QUIET_STARTUP)
 
     try:
-        supervisor_loop(args.command, args.root)
+        supervisor_loop(args.command, args.root, _duration_seconds)
     except KeyboardInterrupt:
         sup_print_runtime("shutting down")
     finally:
