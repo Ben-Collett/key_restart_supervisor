@@ -1,0 +1,24 @@
+# all options shown are set to there default value
+
+# to disable a binding set it's value to an empty string
+# ex: restart = ""
+[bindings]
+restart = "ctrl+windows+r"
+help = "ctrl+windows+h"
+stop = "ctrl+windows+q"
+clear = "ctrl+windows+k"
+reload = "ctrl+windows+l"
+
+[logging]
+help_info = [
+  "user",
+  "command",
+  "config",
+  "restart",
+  "stop",
+  "clear",
+  "help",
+  "reload",
+  "terminate",
+]
+

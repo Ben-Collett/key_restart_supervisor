@@ -4,22 +4,24 @@ import subprocess
 import threading
 import keyboard
 import sys
+import tomllib
 import time
 import signal
 import os
+from config import Config
+from config_manager import ConfigManager
 import argparse
+from pathlib import Path
 import datetime
 
-RESTART_HOTKEY = "ctrl+windows+r"
-STOP_HOTKEY = "ctrl+windows+q"
-CLEAR_HOTKEY = "ctrl+windows+k"
-HELP_HOTKEY = "ctrl+windows+h"
 
 child = None
 restart_requested = threading.Event()
 stop_requested = threading.Event()
 shutdown_requested = threading.Event()
 duration_timer = None
+config_path = None
+_config: Config | None = None
 
 QUIET = False
 QUIET_STARTUP = False
@@ -169,37 +171,82 @@ def on_stop_hotkey():
 
 def on_clear_hotkey():
     if os.name == "nt":
-        os.system("cls")
+        subprocess.run("cls")
     else:
-        os.system("clear")
+        subprocess.run("clear")
 
 
-def print_help_message(command, root, quiet_startup):
+def on_reload_hotkey():
+    global _config, config_path
+    assert _config is not None
+
+    sup_print_runtime("reloading config")
+    keyboard.unhook_all()
+
+    data, path = _load_toml()
+    config_path = path
+    _config.update(data)
+
+    _add_hotkey(_config.bindings.restart, on_restart_hotkey)
+    _add_hotkey(_config.bindings.stop, on_stop_hotkey)
+    _add_hotkey(_config.bindings.clear, on_clear_hotkey)
+    _add_hotkey(_config.bindings.help, lambda: on_help_hotkey(_config))
+    _add_hotkey(_config.bindings.reload, on_reload_hotkey)
+
+    print_help_message(_current_command, _run_as_root,
+                       QUIET_STARTUP, _config, config_path)
+
+
+def _child_color(root):
+    return RED_BOLD if root else WHITE_BOLD
+
+
+def _print_help_info_item(item: str, command, root, config_path: str | None, config: Config):
+    match item:
+        case "user":
+            user = get_child_user(root)
+            sup_print(f"Child will run as user: {
+                      _child_color(root)}{user}{RESET}")
+        case "command":
+            sup_print(f"Command: {WHITE_BOLD}{' '.join(command)}{RESET}")
+        case "config":
+            sup_print(f"Config path: {WHITE_BOLD}{config_path}{RESET}")
+        case "restart":
+            k = config.bindings.restart
+            if k != "":
+                sup_print(f"Restart hotkey: {WHITE_BOLD}{k}{RESET}")
+        case "stop":
+            k = config.bindings.stop
+            if k != "":
+                sup_print(f"Stop hotkey: {WHITE_BOLD}{k}{RESET}")
+        case "clear":
+            k = config.bindings.clear
+            if k != "":
+                sup_print(f"Clear hotkey: {WHITE_BOLD}{k}{RESET}")
+        case "help":
+            k = config.bindings.help
+            if k != "":
+                sup_print(f"Help hotkey: {WHITE_BOLD}{k}{RESET}")
+        case "reload":
+            k = config.bindings.reload
+            if k != "":
+                sup_print(f"Reload hotkey: {WHITE_BOLD}{k}{RESET}")
+        case "terminate":
+            sup_print(f"Press {WHITE_BOLD}ctrl+c{RESET} to quit supervisor")
+
+
+def print_help_message(command, root, quiet_startup, config: Config, config_path: str | None):
     if quiet_startup:
         return
 
-    child_color = WHITE_BOLD
-    if root:
-        child_color = RED_BOLD
-
-    user = get_child_user(root)
-    sup_print(f"Child will run as user: {child_color}{user}{RESET}")
-    sup_print(f"Command: {WHITE_BOLD}{' '.join(command)}{RESET}")
-
-    k = RESTART_HOTKEY
-    sup_print(f"Restart hotkey: {WHITE_BOLD}{k}{RESET}")
-    k = STOP_HOTKEY
-    sup_print(f"Stop hotkey: {WHITE_BOLD}{k}{RESET}")
-    k = CLEAR_HOTKEY
-    sup_print(f"Clear hotkey: {WHITE_BOLD}{k}{RESET}")
-    k = HELP_HOTKEY
-    sup_print(f"Help hotkey: {WHITE_BOLD}{k}{RESET}")
-    sup_print(f"Press {WHITE_BOLD}ctrl+c{RESET} to quit supervisor\n")
+    for item in config.logging.help_info:
+        _print_help_info_item(item, command, root, config_path, config)
+    print()
 
 
-def on_help_hotkey():
-    global _current_command, _run_as_root
-    print_help_message(_current_command, _run_as_root, False)
+def on_help_hotkey(config):
+    print_help_message(_current_command, _run_as_root,
+                       False, config, config_path)
 
 
 def supervisor_loop(command, run_as_root, duration=None):
@@ -237,8 +284,40 @@ def supervisor_loop(command, run_as_root, duration=None):
                 time.sleep(0.1)
 
 
+def _add_hotkey(key, cmd):
+    if key != "":
+        keyboard.add_hotkey(key, cmd)
+
+
+def _load_toml() -> tuple[dict, str | None]:
+    PROJECT_NAME = "ksv"
+    config_manager = ConfigManager(PROJECT_NAME)
+    CONFIG_FILE_NAME = "config.toml"
+    if os.path.exists(CONFIG_FILE_NAME):
+        path = Path(CONFIG_FILE_NAME)
+    else:
+        path = config_manager.find_config_file(CONFIG_FILE_NAME)
+
+    if not os.path.exists(path):
+        return ({}, None)
+
+    with open(path, "rb") as file:
+        data = tomllib.load(file)
+
+    return (data, str(path.absolute()))
+
+
+def _make_config() -> Config:
+    global config_path
+    data, config_path = _load_toml()
+    return Config(data)
+
+
 def main():
     global QUIET, QUIET_STARTUP
+    config = _make_config()
+    global _config
+    _config = config
 
     parser = argparse.ArgumentParser(
         description="A simple tool to easily run, restart, terminate, and rerun a process, based on a keybinding to make development easier."
@@ -257,9 +336,13 @@ def main():
     )
     parser.add_argument(
         "-q",
-        action="count",
-        default=0,
-        help="suppress supervisor runtime output (-qq suppresses startup too)",
+        action="store_true",
+        help="suppress supervisor startup output",
+    )
+    parser.add_argument(
+        "-Q",
+        action="store_true",
+        help="suppress supervisor runtime output",
     )
     parser.add_argument(
         "-d",
@@ -272,13 +355,13 @@ def main():
 
     args = parser.parse_args()
 
-    QUIET = args.q >= 1
-    QUIET_STARTUP = args.q >= 2
+    QUIET = args.Q
+    QUIET_STARTUP = args.q
 
     if not args.command:
         if not QUIET:
             print(
-                "[supervisor] Usage: sudo python reloader.py [-r] [-q|-qq] <command...>"
+                "[supervisor] Usage: sudo python reloader.py [-r] [-q|-Q] <command...>"
             )
         sys.exit(1)
 
@@ -288,10 +371,14 @@ def main():
     _duration_str = args.duration
     _duration_seconds = parse_duration(_duration_str)
 
-    keyboard.add_hotkey(RESTART_HOTKEY, on_restart_hotkey)
-    keyboard.add_hotkey(STOP_HOTKEY, on_stop_hotkey)
-    keyboard.add_hotkey(CLEAR_HOTKEY, on_clear_hotkey)
-    keyboard.add_hotkey(HELP_HOTKEY, on_help_hotkey)
+    _add_hotkey(config.bindings.restart, on_restart_hotkey)
+    _add_hotkey(config.bindings.stop, on_stop_hotkey)
+    _add_hotkey(config.bindings.clear, on_clear_hotkey)
+
+    def _on_help():
+        on_help_hotkey(config)
+    _add_hotkey(config.bindings.help, _on_help)
+    _add_hotkey(config.bindings.reload, on_reload_hotkey)
 
     global YELLOW, CYAN, NORMAL_COLOR, RED_BOLD, WHITE_BOLD, RESET
     if args.no_ansii:
@@ -302,7 +389,8 @@ def main():
         WHITE_BOLD = ""
         RESET = ""
 
-    print_help_message(args.command, args.root, QUIET_STARTUP)
+    print_help_message(args.command, args.root,
+                       QUIET_STARTUP, config, config_path)
 
     try:
         supervisor_loop(args.command, args.root, _duration_seconds)
