@@ -19,7 +19,7 @@ Some programmers use programs to reload their program whenever they save. I don'
 ## Installation
 The way I installed the program is using my [dumb_installer](https://github.com/Ben-Collett/dumb_installer) program, though you can feel free to install the program through whatever means you want. Just keep in mind this program needs root privlages to listen to keyboard inputs so you probably want to install it somewhere sudo can access it.
 
-If you use dumb_installer the command to run the program will be ksv.
+If you use  [dumb_installer](https://github.com/Ben-Collett/dumb_installer)the command to run the program will be ksv.
 
 Note dumb_installer currently only works on Linux, so if your on another platform your on your own for now.
 

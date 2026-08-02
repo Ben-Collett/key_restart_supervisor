@@ -42,7 +42,7 @@ def current_timestamp():
     return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-4]
 
 
-def parse_duration(duration_str):
+def _parse_duration(duration_str):
     """
     Parse a duration string to seconds (float).
     '5' -> 5.0 seconds
@@ -113,18 +113,24 @@ def drop_privileges_preexec():
 def start_child(command, run_as_root, duration=None):
     global child
 
-    preexec = None
     if is_linux() and os.geteuid() == 0 and not run_as_root:
-        preexec = drop_privileges_preexec
-
-    child = subprocess.Popen(
-        command,
-        stdin=sys.stdin,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-        text=True,
-        preexec_fn=preexec,
-    )
+        user = get_child_user(run_as_root)
+        runuser_cmd = ["runuser", "-u", user, "--"] + command
+        child = subprocess.Popen(
+            runuser_cmd,
+            stdin=sys.stdin,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            text=True,
+        )
+    else:
+        child = subprocess.Popen(
+            command,
+            stdin=sys.stdin,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            text=True,
+        )
 
     if duration:
         start_duration_timer(duration)
@@ -369,7 +375,7 @@ def main():
     _current_command = args.command
     _run_as_root = args.root
     _duration_str = args.duration
-    _duration_seconds = parse_duration(_duration_str)
+    _duration_seconds = _parse_duration(_duration_str)
 
     _add_hotkey(config.bindings.restart, on_restart_hotkey)
     _add_hotkey(config.bindings.stop, on_stop_hotkey)
