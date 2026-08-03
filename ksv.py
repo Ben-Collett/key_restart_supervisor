@@ -29,6 +29,7 @@ _current_command = None
 _run_as_root = False
 _duration_seconds = None
 _duration_str = None
+_force_kill = False
 
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
@@ -136,17 +137,57 @@ def start_child(command, run_as_root, duration=None):
         start_duration_timer(duration)
 
 
+def _read_children(pid):
+    try:
+        with open(f"/proc/{pid}/task/{pid}/children") as f:
+            return [int(c) for c in f.read().split()]
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError):
+        return []
+
+
+def _descendants(pid):
+    """Walk /proc to find all descendant PIDs of pid (Linux only)."""
+    result = []
+    frontier = [pid]
+    while frontier:
+        nxt = []
+        for p in frontier:
+            for c in _read_children(p):
+                result.append(c)
+                nxt.append(c)
+        frontier = nxt
+    return result
+
+
+def _kill_pids(pids, sig):
+    for p in pids:
+        try:
+            os.kill(p, sig)
+        except OSError:
+            pass
+
+
 def stop_child():
     global child, duration_timer
     if duration_timer:
         duration_timer.cancel()
         duration_timer = None
     if child and child.poll() is None:
-        try:
-            child.send_signal(signal.SIGTERM)
-            child.wait(timeout=2)
-        except Exception:
+        if _force_kill:
+            _kill_pids(_descendants(child.pid), signal.SIGKILL)
             child.kill()
+            child.wait()
+        else:
+            descendants = _descendants(child.pid)
+            _kill_pids(descendants, signal.SIGTERM)
+            if not descendants:
+                child.send_signal(signal.SIGTERM)
+            try:
+                child.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                _kill_pids(_descendants(child.pid), signal.SIGKILL)
+                child.kill()
+                child.wait()
     child = None
 
 
@@ -357,6 +398,12 @@ def main():
         metavar="DURATION",
         help="automatically terminate the subprocess after this duration (e.g., '5' for 5 seconds, '500ms' for 500 milliseconds)",
     )
+    parser.add_argument(
+        "-t",
+        "--terminate",
+        action="store_true",
+        help="forcefully terminate the child process (SIGKILL) instead of sending SIGTERM",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
@@ -371,9 +418,10 @@ def main():
             )
         sys.exit(1)
 
-    global _current_command, _run_as_root, _duration_seconds, _duration_str
+    global _current_command, _run_as_root, _duration_seconds, _duration_str, _force_kill
     _current_command = args.command
     _run_as_root = args.root
+    _force_kill = args.terminate
     _duration_str = args.duration
     _duration_seconds = _parse_duration(_duration_str)
 
