@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -64,6 +65,23 @@ def _parse_duration(duration_str):
 
 def is_linux():
     return os.name == "posix" and sys.platform.startswith("linux")
+
+
+def _resolve_command(command: list[str], cwd: str) -> list[str]:
+    if not command:
+        return command
+    prog = command[0]
+    try:
+        prog = str(Path(prog).expanduser())
+    except (KeyError, ValueError):
+        pass
+    if not Path(prog).is_absolute():
+        found = shutil.which(prog)
+        if found:
+            prog = found
+        else:
+            prog = os.path.normpath(os.path.join(cwd, prog))
+    return [prog, *command[1:]]
 
 
 def sup_print(*args, **kwargs):
@@ -394,6 +412,7 @@ def _make_config() -> Config:
 
 def main():
     global QUIET, QUIET_STARTUP
+    cwd = str(Path.cwd().resolve())
     config = _make_config()
     global _config
     _config = config
@@ -456,7 +475,7 @@ def main():
         sys.exit(1)
 
     global _current_command, _run_as_root, _duration_seconds, _duration_str, _force_kill, _tty_restore_enabled
-    _current_command = args.command
+    _current_command = _resolve_command(args.command, cwd)
     _run_as_root = args.root
     _force_kill = args.terminate
     _duration_str = args.duration
@@ -481,13 +500,13 @@ def main():
         WHITE_BOLD = ""
         RESET = ""
 
-    print_help_message(args.command, args.root,
+    print_help_message(_current_command, args.root,
                        QUIET_STARTUP, config, config_path)
 
     _save_terminal()
 
     try:
-        supervisor_loop(args.command, args.root, _duration_seconds)
+        supervisor_loop(_current_command, args.root, _duration_seconds)
     except KeyboardInterrupt:
         sup_print_runtime("shutting down")
     finally:
