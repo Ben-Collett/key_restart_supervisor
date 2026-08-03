@@ -14,6 +14,8 @@ The supervisor program will then be running main.py, you can then restart the pr
 
 The child process will be run as your user unless you pass the -r flag then it will be ran with root privileges (Linux only), to see all available flags use the -h flag. 
 
+By default, the supervisor saves and restores terminal settings (like raw mode) after the child exits, preventing the terminal from becoming unusable if the child crashes while in a special mode. This can be disabled with `--no-tty-restore` or in the config file.
+
 ## Why?
 Some programmers use programs to reload their program whenever they save. I don't do this because I instinctively save in the middle of making changes to code a lot. While this isn't going to be a problem for most applications some that send notifications, deal with network traffic, or deal with managing keyboard events can be more problematic  to restart in a half-functional state. Hence the desire to have a separate keybinding to restart those programs easily without having to manually stop and restart the program.
 ## Installation

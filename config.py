@@ -103,7 +103,7 @@ def _merge_expected(config_map: dict, expected_map: dict, ignored_sections=set()
     return result
 
 def _get_expected_map():
-    return {"bindings": {"restart": _ExpectedField("ctrl+windows+r", str), "help": _ExpectedField("ctrl+windows+h", str), "stop": _ExpectedField("ctrl+windows+q", str), "clear": _ExpectedField("ctrl+windows+k", str), "reload": _ExpectedField("ctrl+windows+l", str)}, "logging": {"help_info": _ExpectedList(["user", "command", "config", "restart", "stop", "clear", "help", "reload", "terminate"], str)}}
+    return {"bindings": {"restart": _ExpectedField("ctrl+windows+r", str), "help": _ExpectedField("ctrl+windows+h", str), "stop": _ExpectedField("ctrl+windows+q", str), "clear": _ExpectedField("ctrl+windows+k", str), "reload": _ExpectedField("ctrl+windows+l", str)}, "supervisor": {"tty_restore": _ExpectedField(True, bool)}, "logging": {"help_info": _ExpectedList(["user", "command", "config", "restart", "stop", "clear", "help", "reload", "terminate"], str)}}
 
 class Config:
     def __init__(self, config_map: dict | None = None):
@@ -113,6 +113,7 @@ class Config:
             config_map, _get_expected_map()
         )
         self.bindings = BindingsSection(merged["bindings"])
+        self.supervisor = SupervisorSection(merged["supervisor"])
         self.logging = LoggingSection(merged["logging"])
 
     def update(self, config_map: dict | None = None):
@@ -122,6 +123,7 @@ class Config:
             config_map, _get_expected_map()
         )
         self.bindings.update(merged["bindings"])
+        self.supervisor.update(merged["supervisor"])
         self.logging.update(merged["logging"])
 
 class BindingsSection:
@@ -134,6 +136,13 @@ class BindingsSection:
         self.stop: str = smap["stop"]
         self.clear: str = smap["clear"]
         self.reload: str = smap["reload"]
+
+class SupervisorSection:
+    def __init__(self, smap: dict):
+        self.update(smap)
+
+    def update(self, smap: dict):
+        self.tty_restore: bool = smap["tty_restore"]
 
 class LoggingSection:
     def __init__(self, smap: dict):

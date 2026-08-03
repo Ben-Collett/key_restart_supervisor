@@ -1,19 +1,21 @@
 #!/usr/bin/env python
 # should I force a new line before displaying message if there isn't one?
-import subprocess
-import threading
-import keyboard
-import sys
-import tomllib
-import time
-import signal
+import argparse
+import datetime
 import os
+import signal
+import subprocess
+import sys
+import termios
+import threading
+import time
+from pathlib import Path
+
+import tomllib
+
+import keyboard
 from config import Config
 from config_manager import ConfigManager
-import argparse
-from pathlib import Path
-import datetime
-
 
 child = None
 restart_requested = threading.Event()
@@ -30,6 +32,8 @@ _run_as_root = False
 _duration_seconds = None
 _duration_str = None
 _force_kill = False
+_tty_restore_enabled = True
+_saved_terminal = None
 
 YELLOW = "\033[33m"
 CYAN = "\033[36m"
@@ -189,6 +193,7 @@ def stop_child():
                 child.kill()
                 child.wait()
     child = None
+    _restore_terminal()
 
 
 def start_duration_timer(seconds):
@@ -205,6 +210,32 @@ def on_duration_timeout():
     duration_timer = None
     sup_print_runtime(f"duration timeout ({_duration_str}), stopping")
     stop_requested.set()
+
+
+def _save_terminal():
+    global _saved_terminal
+    if os.name != "posix" or not os.isatty(0):
+        return
+    if not _tty_restore_enabled:
+        return
+    if _saved_terminal is not None:
+        return
+    try:
+        _saved_terminal = termios.tcgetattr(0)
+    except Exception:
+        pass
+
+
+def _restore_terminal():
+    global _saved_terminal
+    if os.name != "posix" or not os.isatty(0):
+        return
+    if _saved_terminal is None:
+        return
+    try:
+        termios.tcsetattr(0, termios.TCSADRAIN, _saved_terminal)
+    except Exception:
+        pass
 
 
 def on_restart_hotkey():
@@ -321,6 +352,7 @@ def supervisor_loop(command, run_as_root, duration=None):
         if child and child.poll() is not None:
             sup_print_runtime(f"process exited with code {child.returncode}")
             child = None
+            _restore_terminal()
 
         if child is None:
             if restart_requested.is_set():
@@ -404,6 +436,11 @@ def main():
         action="store_true",
         help="forcefully terminate the child process (SIGKILL) instead of sending SIGTERM",
     )
+    parser.add_argument(
+        "--no-tty-restore",
+        action="store_true",
+        help="disable saving and restoring terminal settings after child process exits",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
@@ -418,12 +455,13 @@ def main():
             )
         sys.exit(1)
 
-    global _current_command, _run_as_root, _duration_seconds, _duration_str, _force_kill
+    global _current_command, _run_as_root, _duration_seconds, _duration_str, _force_kill, _tty_restore_enabled
     _current_command = args.command
     _run_as_root = args.root
     _force_kill = args.terminate
     _duration_str = args.duration
     _duration_seconds = _parse_duration(_duration_str)
+    _tty_restore_enabled = not args.no_tty_restore and config.supervisor.tty_restore
 
     _add_hotkey(config.bindings.restart, on_restart_hotkey)
     _add_hotkey(config.bindings.stop, on_stop_hotkey)
@@ -445,6 +483,8 @@ def main():
 
     print_help_message(args.command, args.root,
                        QUIET_STARTUP, config, config_path)
+
+    _save_terminal()
 
     try:
         supervisor_loop(args.command, args.root, _duration_seconds)

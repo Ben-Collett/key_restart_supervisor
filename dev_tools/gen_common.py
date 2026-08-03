@@ -23,6 +23,10 @@ def make_builder() -> Builder:
     builder.add_str("clear", "ctrl+windows+k")
     builder.add_str("reload", "ctrl+windows+l")
     builder.new_line()
+    builder.add_section("supervisor")
+    builder.add_bool("tty_restore", True)
+
+    builder.new_line()
     builder.add_section("logging")
 
     help_info = ["user", "command", "config", "restart",

@@ -9,6 +9,9 @@ stop = "ctrl+windows+q"
 clear = "ctrl+windows+k"
 reload = "ctrl+windows+l"
 
+[supervisor]
+tty_restore = true
+
 [logging]
 help_info = [
   "user",
@@ -21,4 +24,3 @@ help_info = [
   "reload",
   "terminate",
 ]
-
